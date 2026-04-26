@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SW2007 — IRF Explorer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fff;--bg2:#f5f4f0;--bg3:#eeecea;
+  --border:rgba(0,0,0,.09);--border2:rgba(0,0,0,.17);
+  --text:#1a1a18;--text2:#5f5e5a;--text3:#888780;
+  --blue:#378ADD;--teal:#1D9E75;--coral:#D85A30;--amber:#BA7517;--orange:#E68A2E;
+  --r:8px;--rl:12px;
+}
+@media(prefers-color-scheme:dark){
+  :root{--bg:#1c1c1a;--bg2:#252523;--bg3:#2e2e2b;
+        --border:rgba(255,255,255,.09);--border2:rgba(255,255,255,.17);
+        --text:#e8e6df;--text2:#b4b2a9;--text3:#888780}
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:var(--bg3);color:var(--text);font-size:14px;line-height:1.5}
+.page{max-width:1140px;margin:0 auto;padding:2rem 1.25rem 4rem}
+h1{font-size:19px;font-weight:500;margin-bottom:3px}
+.sub{font-size:12px;color:var(--text2);margin-bottom:1.4rem}
+.card{background:var(--bg);border:.5px solid var(--border);
+       border-radius:var(--rl);padding:1.1rem 1.25rem;margin-bottom:.9rem}
+.card-title{font-size:11px;font-weight:500;color:var(--text3);
+             text-transform:uppercase;letter-spacing:.06em;margin-bottom:.85rem}
+
+.shock-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.shock-block{background:var(--bg2);border-radius:var(--r);padding:10px 12px}
+.shock-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tog{position:relative;width:34px;height:19px;flex-shrink:0;cursor:pointer}
+.tog input{opacity:0;width:0;height:0}
+.tog-track{position:absolute;inset:0;background:var(--border2);border-radius:10px;transition:.18s}
+.tog input:checked+.tog-track{background:var(--blue)}
+.tog-thumb{position:absolute;width:13px;height:13px;background:#fff;
+            border-radius:50%;top:3px;left:3px;transition:.18s}
+.tog input:checked~.tog-thumb{left:18px}
+.shock-name{flex:1;font-size:13px}
+.shock-val{font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
+.sl-row{display:flex;justify-content:space-between;font-size:11px;
+         color:var(--text3);margin-bottom:3px}
+input[type=range]{width:100%;-webkit-appearance:none;height:3px;border-radius:2px;
+                   background:var(--bg3);outline:none;cursor:pointer;margin-bottom:7px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+  border-radius:50%;background:var(--blue);border:2px solid var(--bg)}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;
+  background:var(--blue);border:2px solid var(--bg)}
+
+.settings{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:.9rem}
+.ctrl{background:var(--bg2);border-radius:var(--r);padding:9px 12px;min-width:160px}
+.ctrl-head{display:flex;justify-content:space-between;margin-bottom:6px}
+.ctrl-name{font-size:12px;color:var(--text2)}
+.ctrl-val{font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:.85rem}
+.leg{display:flex;align-items:center;gap:5px}
+.leg-line{width:20px;height:2px;border-radius:1px;flex-shrink:0}
+.leg-line.dash{background:none!important;border-top:2px dashed}
+.leg-line.dot{background:none!important;border-top:2px dotted}
+
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.chart-card{background:var(--bg);border:.5px solid var(--border);
+             border-radius:var(--rl);padding:12px 14px}
+.chart-name{font-size:13px;font-weight:500;margin-bottom:2px}
+.chart-sub{font-size:11px;color:var(--text3);margin-bottom:8px}
+.chart-wrap{position:relative;height:220px}
+.eq{font-size:11px;color:var(--text3);line-height:1.9}
+@media(max-width:650px){
+  .chart-grid{grid-template-columns:1fr}
+  .page{padding:1rem}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Smets-Wouters (2007) — Impulse Response Explorer</h1>
+<p class="sub">Select any combination of shocks. IRFs are log-deviations from balanced growth path.
+Trend (0.398%/qtr, 1.59%/yr) and inflation target (0.70%/qtr, 2.8%/yr) added to level charts.</p>
+
+<div class="card">
+  <div class="card-title">Shocks — select any combination</div>
+  <div class="shock-grid" id="shock-grid"></div>
+</div>
+
+<div class="settings">
+  <div class="ctrl">
+    <div class="ctrl-head">
+      <span class="ctrl-name">Horizon (quarters)</span>
+      <span class="ctrl-val" id="v-T">40</span>
+    </div>
+    <input type="range" id="sl-T" min="2" max="80" step="2" value="15" oninput="update()">
+  </div>
+</div>
+
+<div class="legend">
+  <div class="leg"><div class="leg-line" style="background:var(--blue)"></div>Sticky economy / Nominal</div>
+  <div class="leg"><div class="leg-line dash" style="border-color:var(--teal)"></div>Flexible economy (y*, r*)</div>
+  <div class="leg"><div class="leg-line dot" style="border-color:var(--coral)"></div>HP statistical trend</div>
+</div>
+
+<div class="legend" style="margin-top:-0.5rem">
+  <div class="leg"><div class="leg-line" style="background:var(--orange)"></div>Gap: y − y* (sticky − flex)</div>
+  <div class="leg"><div class="leg-line" style="background:var(--coral)"></div>Gap: y − HP (statistical)</div>
+  <div class="leg"><div class="leg-line" style="background:var(--blue)"></div>Gap: y − trend (deterministic)</div>
+</div>
+
+<div class="chart-grid">
+
+  <div class="chart-card">
+    <div class="chart-name">Output (log level, % from t=0)</div>
+    <div class="chart-sub">NK output + deterministic trend; flex-price y* dashed; HP trend dotted</div>
+    <div class="chart-wrap"><canvas id="c-y" aria-label="Output">Output</canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-name">Output gap (%)</div>
+    <div class="chart-sub">Orange: y − y* | Coral: y − HP | Blue: y − trend</div>
+    <div class="chart-wrap"><canvas id="c-gap" aria-label="Output gap">Gap</canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-name">Inflation (%, annualised)</div>
+    <div class="chart-sub">Level including target; dashed = target</div>
+    <div class="chart-wrap"><canvas id="c-pi" aria-label="Inflation">Inflation</canvas></div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-name">Interest rates (%, annualised)</div>
+    <div class="chart-sub">Nominal rate (blue) and natural rate r* (teal) — levels</div>
+    <div class="chart-wrap"><canvas id="c-r" aria-label="Rates">Rates</canvas></div>
+  </div>
+
+</div>
+
+<div class="card" style="margin-top:.9rem">
+  <div class="card-title">Model</div>
+  <div class="eq">
+    Smets &amp; Wouters (2007) — medium-scale NK DSGE · Capital accumulation · Investment adjustment costs · Capital utilization<br>
+    Habits λ=0.64 · σ=1.50 · Calvo prices ξ_p=0.60 · Calvo wages ξ_w=0.81<br>
+    Taylor: ρ=0.876 · φ_π=1.488 · φ_y=0.0593 · φ_Δy=0.2347<br>
+    Solution: Dynare first-order perturbation · Output gap = NK output − flex-price output · HP filter λ=1600
+  </div>
+</div>
+
+</div>
+
+<script>
+const D = {"ghx":[[0,0,-0.1977437516488374,0.1977437516488376,-0.7382321056442731,-0.9053818743810886,1.3551800767671949,0.6901270370882686,0.40681414931685866,0,0,0,-0.00046210279746704405,-0.1976714626296925,0.008849526885980714,0.007424047510343713,0.344294577053076,0.12866279212322157,-0.05744978715479412,-0.07424389772301654],[0,0,0.15435193444138098,-0.15435193444138093,0.5762384531637746,-0.15838367390671712,0.49571137411405064,0.04889774313568284,0.06243592365678251,0,0,0,0.020207601741540702,-0.04757202750310802,-0.07053731527422852,-0.025739963039965705,0.11980533590670814,0.04541779501077954,0.04809169616136664,0.04463348902046756],[0,0,-0.057581376815555724,0.05758137681555594,-0.2149672022402642,-0.14347982443482146,0.13783658967230142,0.019486960123752485,0.06148424983221918,0,0,0,0.0016828778070025784,-0.023261941823523997,-0.002207863276903229,-0.0004349656789490095,0.011646660084959183,0.007085879896642602,0.40979326833645946,0.10007024681791167],[0,0,-0.2881356828439609,-0.7118643171560395,-1.0756901802636487,0.2818849225143065,1.9431386780849984,0.9701015621927915,0.5836878220485671,0,0,0,-0.0004453884466735161,-0.17884070071357422,0.012233819522171063,0.010527452188523176,0.4861147001051706,0.18225181655806258,-0.11319605522458677,0.10824228846631756],[0,0,-0.2816890250497221,0.28168902504972165,-1.0516230240671764,0.5369454207767027,2.108341009012452,-0.21705809913896082,-0.03475192673645092,0,0,0,-0.0020162857199157815,0.04626339754117667,0.01703432479542154,0.011966983911030593,-0.3251293188839548,0.005800415576868618,-0.07863352572030742,-0.018072454466415998],[0,0,-0.36650185686480213,0.3665018568648018,-1.3682527779503162,0.3339767127847292,1.8254199894668257,-0.050414635722028096,2.9068707449645963,0,0,0,0.0043600551059802106,0.0032649113286592583,-0.000455896306886206,0.008310943709590055,-0.041922405285857105,-0.14428495484853576,-0.1721174309151702,-0.048609576056974385],[0,0,-0.040739750405923446,0.04073975040592379,-0.15209275375232267,0.21120463249212426,0.15933780753669857,0.007195358220866815,0.049251369680906563,0,0,0,0.0007717076655707572,0.00542051445926744,-0.0006905315403806678,0.00042567724751899896,0.011746565793551688,0.006636866882460509,-0.12397020291199481,-0.19221461865097866],[0,0,4.1857786380191375e-17,2.7891105605025875e-17,-2.845323431294476e-17,0.4027184914827227,2.8533128273347814e-16,0.38122524171794175,0.181395831690306,0,0,0,-0.7706464021373676,1.5030942611372342e-17,0.14704421105152177,0.05674804951613013,-8.4012990818029e-18,7.190664071121018e-17,-4.907161238224501e-18,-1.4204712388458215e-17],[0,0,1.3129339154841333e-16,2.6577572373325164e-17,3.785150374218576e-17,0.4027184914827226,1.7346311359711966e-16,0.3812252417179414,0.18139583169030435,0,0,0,0.22935359786263265,3.0858848212791943e-17,0.14704421105152138,0.05674804951612998,-2.2625944963705468e-17,3.9412177453681204e-17,2.5865789744361546e-18,-1.4591430667516295e-17],[0,0,1.5665920403248065e-16,5.633802130927981e-17,-5.745277085690865e-17,1.2658215086309978,2.1220672859256944e-16,-0.044436354341020924,-0.021143850330190467,0,0,0,0.08982804087863937,-3.970136235359469e-17,-0.017139758733278495,-0.0066146628305535195,3.473997148549559e-17,2.004611037282074e-17,-8.579892455379767e-18,-3.9072567553725796e-17],[0,0,-2.84733091597822e-16,-1.5777739609366632e-17,-2.439391836597412e-16,-1.0811103911685085,3.8779427308212986,0.45222449252907543,-0.23989449140898372,0,0,0,-0.17052900770762933,-2.4357195463296646e-16,0.5373745338483573,0.1454063563949251,9.54924792024262e-17,1.2125363001416453e-17,-6.1191759116080515e-18,4.617030997215991e-17],[0,0,-0.046393046825453046,0.046393046825453345,-0.17319807255416256,-0.8821005235651689,0.21909209891388995,0.05058802051394102,0.06694030429872047,0,0,0,0.00060653049921957,-0.07302381436137591,3.115664152379642e-06,0.0008314232988471946,0.03196467610984742,0.013798447966973668,-0.10595595325039753,0.6613799579817933],[0,0,-0.17418834990079707,0.17418834990079737,-0.6502932773032732,-0.5070270574756988,1.1062038626955624,0.509324277533792,0.3331102550759682,0,0,0,0.0002261353956630436,-0.8708200925436786,0.005959330200426048,0.005733438963142979,0.2600524507351766,0.09882287093775036,-0.13250916074478225,0.5357786996404341],[0,0,-0.17418834990079712,0.17418834990079735,-0.6502932773032734,-0.5070270574756995,1.1062038626955621,0.5093242775337924,0.33311025507596775,0,0,0,0.00022613539566301085,0.12917990745632146,0.005959330200426151,0.005733438963142913,0.26005245073517685,0.0988228709377502,-0.1325091607447825,0.5357786996404339],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,1.3851173906250475e-16,1.3190041484222913e-17,1.4910414458393823e-16,0.8270505712268404,1.0121886387099973e-16,0.7829105456967589,0.3725270366038568,0,0,0,-0.08265279737958776,9.833220076397344e-17,0.30198017056035353,0.1165417227193248,-8.143906547833014e-17,3.356331559260195e-17,2.1945056838328322e-17,-6.520741775182471e-18],[0,0,-0.2881356828439609,0.2881356828439605,-1.0756901802636487,0.2818849225143065,1.9431386780849984,0.9701015621927915,0.5836878220485671,0,0,0,-0.0004453884466735161,-0.17884070071357422,0.012233819522171063,0.010527452188523176,0.4861147001051706,0.18225181655806258,-0.11319605522458677,0.10824228846631756],[0,0,0.15435193444138098,-0.15435193444138093,0.5762384531637746,-0.15838367390671712,0.49571137411405064,0.04889774313568284,0.06243592365678251,0,0,0,0.020207601741540702,-0.04757202750310802,-0.07053731527422852,-0.025739963039965705,0.11980533590670814,0.04541779501077954,0.04809169616136664,0.04463348902046756],[0,0,1.3627870445025158e-19,-1.552654378526072e-19,5.271448409712227e-19,0.9976999999999999,1.377867778158898e-17,-2.3714106098115083e-17,-1.6199668623937964e-17,0,0,0,4.424232132814545e-22,-3.535213416756306e-19,-5.845014387098457e-21,-4.933965826804326e-21,-1.7925510384345734e-19,-2.1511904173823152e-19,2.8214131057239106e-19,1.0957745403159048e-19],[0,0,9.5389339946516e-18,-6.8762691239097264e-18,3.8089643893784164e-17,-4.8873624746598145e-18,0.5799,3.3789467160671386e-18,-2.7176124021535353e-17,0,0,0,-7.782915805660095e-21,-1.5840582165405331e-18,3.6200328620188385e-20,1.5774710531196478e-20,2.7892603267026052e-18,-2.1131104838394546e-18,3.4109968338091995e-18,1.037910925725825e-18],[0,0,0,0,0,0,0,0.9957,9.61676784512912e-18,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0.7165,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,-8.329629583259426e-17,-3.02279077002222e-17,-2.255370453895381e-17,0.017395237281629682,3.662395863065339e-16,-0.005787534513637767,0.19822496880682036,0,0,0,0.9735818998643969,-3.6984575981218087e-17,-0.0055575325755341945,0.022785773815452104,7.915127807579826e-17,2.2879109536281085e-17,-4.86625300213515e-18,4.6335425468099013e-17],[0,0,-0.010579827940795308,0.010579827940795131,-0.03949742327108979,0.00964092293480063,0.05269449266493539,-0.0014553218807663243,0.20930275239825027,0,0,0,0.00012586193485692566,0.9712271969618252,-1.3160382124534048e-05,0.00023991243925825857,-0.0012101762282534462,0.02470197019326981,-0.004968522725291352,-0.0014032151306330566],[0,0,9.743555344008914e-17,5.423144505538215e-17,-9.845639641388583e-17,0.9723055239810884,1.0548258294289084e-16,-0.4193746243484978,-0.19954819473834687,0,0,0,0.1360621302636302,-7.821875565750472e-17,0.47181810414246983,-0.062426852537599935,5.815076656703301e-17,-1.6461825025693247e-17,-1.17574171901179e-17,-4.1035760658364924e-17],[0,0,3.3765833122152745e-16,-2.4361684120726433e-16,8.495259859631587e-16,0.6025983409179927,-9.116859901151569e-16,-0.20048928562802312,2.5231189222577077,0,0,0,0.08483551824085796,6.364722543229091e-16,-0.19252165724415948,0.7893349929882507,-1.0671994435408599e-16,5.963059560891382e-17,1.758463558857585e-16,9.609762655676961e-17],[0,0,-0.2816890250497221,0.28168902504972165,-1.0516230240671764,0.5369454207767027,2.108341009012452,-0.21705809913896082,-0.03475192673645092,0,0,0,-0.0020162857199157815,0.04626339754117667,0.01703432479542154,0.011966983911030593,0.6748706811160452,0.005800415576868618,-0.07863352572030742,-0.018072454466415998],[0,0,-0.36650185686480213,0.3665018568648018,-1.3682527779503162,0.3339767127847292,1.8254199894668257,-0.050414635722028096,2.9068707449645963,0,0,0,0.0043600551059802106,0.0032649113286592583,-0.000455896306886206,0.008310943709590055,-0.041922405285857105,0.8557150451514642,-0.1721174309151702,-0.048609576056974385],[0,0,-0.057581376815555724,0.05758137681555594,-0.2149672022402642,-0.14347982443482146,0.13783658967230142,0.019486960123752485,0.06148424983221918,0,0,0,0.0016828778070025784,-0.023261941823523997,-0.002207863276903229,-0.0004349656789490095,0.011646660084959183,0.007085879896642602,0.40979326833645946,0.10007024681791167],[0,0,-0.040739750405923446,0.04073975040592379,-0.15209275375232267,0.21120463249212426,0.15933780753669857,0.007195358220866815,0.049251369680906563,0,0,0,0.0007717076655707572,0.00542051445926744,-0.0006905315403806678,0.00042567724751899896,0.011746565793551688,0.006636866882460509,-0.12397020291199481,0.8077853813490213],[0,0,-1.8013764750034106e-17,9.369756273659624e-18,-4.074742612597422e-17,0.14864855600183755,1.3506997722315814e-16,0.14071512207989764,0.06695552604560084,0,0,0,-0.28445546278235795,-2.9121515185131137e-18,0.05427590265538115,0.02094643229675344,1.0766846645237112e-17,3.711513621647152e-17,-4.472804172189162e-18,-5.607621364254738e-18],[0,0,4.886243225524089e-16,-3.7099254119719935e-16,1.6649421361045045e-15,1.9202048707978345,-2.9438107334021672e-15,-0.7521374973482676,-1.3475302662736617,0,0,0,0.2829177477159862,7.23887885262828e-16,-0.8623533504446325,-0.36224905928851986,-1.447775770525656e-16,0,1.4779377657449406e-16,1.025507837455673e-16],[0,0,2.252546797268718e-17,-3.916558817023991e-17,1.2275153930994692e-16,-0.7144544611464375,-3.7413996570497523e-17,0.5663767181388599,0.2694952080660942,0,0,0,-0.14492990579836457,8.799996197105784e-17,0.2184598724401808,0.08430914464343678,-5.857322309538563e-17,2.8656038571785553e-17,1.14904408943101e-17,3.222928543526004e-17],[0,0,-0.06429515215396339,0.06429515215396354,-0.240031582093322,-0.18715018441326417,0.4083140216083291,0.18799811777534253,0.12295526392179774,0,0,0,8.346947244081785e-05,-0.3214308556267466,0.0021996651451736595,0.0021162857947198245,0.0959886921114506,0.03647678806793198,-0.04891082932200605,0.19776278398557098],[0,0,-0.7789957261213208,0.7789957261213207,-2.908206456018317,0.23186955670994516,6.805892420474522,-0.08142704002532772,-1.0323600339941357,0,0,0,-0.012585173231150186,-0.00450523461479549,0.06782754122624898,0.04193764743466661,-0.19057870253309397,-0.15090000664503322,-0.18052873329910218,0.1264489420209717],[0,0,-0.1977437516488374,0.1977437516488376,-0.7382321056442731,-0.9053818743810886,1.3551800767671949,0.6901270370882686,0.40681414931685866,0,0,0,-0.00046210279746704405,-0.1976714626296925,0.008849526885980714,0.007424047510343713,0.344294577053076,0.12866279212322157,-0.05744978715479412,-0.07424389772301654]],"ghu":[[-0.5539842797626444,2.3369202910280995,0.6931073989035543,0.5677796919984064,-0.8425383538510325,-0.1040662324196495,-0.1477946691252618],[-0.13370325129581548,0.8548221660873473,0.04910891145493911,0.08714015862774964,0.6576563035423135,0.10482886386612969,0.08885028862972817],[-0.13382931966870507,0.23769027362010528,0.01957111592221766,0.0858119327735088,-0.2453403358140412,1.1766698118827974,0.19920625763633062],[0.7794231693559709,3.350816827185734,0.9742910135510621,0.8146375743873938,-1.227676535338568,-0.46244438874769395,0.2154740483712663],[0.4270055475859848,3.6356975495990027,-0.217995479701678,-0.04850234017648362,-1.2002088838931548,-0.22692861818303178,-0.035976188078246034],[0.3089241290613905,3.147818571248203,-0.05063235484787306,4.057042212092955,-1.5615758707490517,-0.48756035388241925,-0.0967653427418657],[0.2153770032527638,0.2747677315687227,0.007226431877942208,0.06873882718898641,-0.1735822343669529,-1.2034702916664421,1.608029438407181],[0.5989113899771653,-1.2352828766001301e-17,0.38287158955301986,0.25316933941424236,2.2394470209296075e-17,-1.5227221450509344e-17,-2.1518723103311e-17],[0.5989113899771653,7.98875854666269e-17,0.38287158955301986,0.2531693394142424,-1.3612476540300257e-17,-1.694991008316151e-17,-2.2462494834809026e-17],[1.2459791992544051,1.079283622114978e-15,-0.04462825584113703,-0.029509909742064352,-4.200331744481368e-16,-9.531634491068363e-17,-1.3437514595304651e-16],[-0.8519721749764333,6.687261132645796,0.45417745558810485,-0.33481436344590854,-3.710102820205635e-16,2.6257257720232204e-17,-1.2007225241364205e-16],[-0.8582227227471947,0.37781013780633316,0.050806488414121956,0.09342680292913039,-0.19766956465894045,-0.9992402649209624,1.316585403701075],[-0.24731875476281684,1.9075769317047193,0.5115238300028051,0.4649131264144717,-0.7421744776344167,-0.9550246771924814,1.0665554754835138],[-0.2473187547628168,1.9075769317047189,0.511523830002805,0.4649131264144717,-0.7421744776344167,-0.9550246771924814,1.0665554754835136],[9.44272329599094e-18,-3.768030142895454e-17,-5.28463855791958e-18,-1.5233040523421337e-17,-1.0921174911336941e-17,-1.3278149195884605e-17,0.9999999999999999],[0,0,0,0,0,1,0],[1.2299658885073224,2.4697586721929773e-16,0.7862915995749316,0.5199260803961716,-5.801382940877435e-17,-4.816844297889271e-17,-4.641594700206627e-17],[0.7794231693559709,3.350816827185734,0.9742910135510621,0.8146375743873938,-1.227676535338568,-0.46244438874769395,0.2154740483712663],[-0.13370325129581548,0.8548221660873473,0.04910891145493911,0.08714015862774964,0.6576563035423135,0.10482886386612969,0.08885028862972817],[0.9999999999999999,8.955026217164284e-16,7.678771055892054e-17,3.381272920169072e-16,-2.996160669537154e-16,-9.796611903285532e-17,-1.1024304616806485e-16],[2.3190087737706834e-17,1.0000000000000002,-2.3971776088416054e-17,-5.0028054445390023e-17,-1.3034479187789222e-16,-2.1815951379506566e-17,9.985136217858709e-18],[0.51,0,1,0,0,0,0],[0,-2.2641689835088844e-17,1.1060105697331107e-17,0.9999999999999998,4.424042278932443e-17,-3.893808747629034e-18,-2.9587751651407685e-18],[0,0,0,0,1,0,0],[0,0,0,0,0,1,0],[9.44272329599094e-18,-3.768030142895454e-17,-5.28463855791958e-18,-1.5233040523421337e-17,-1.0921174911336941e-17,-1.3278149195884605e-17,0.9999999999999999],[0.014470949083613295,-3.95755966426717e-17,-0.005812528385696555,0.2766573186417588,1.97687699288597e-17,-2.6371622118084187e-18,8.211291932790981e-18],[0.008917728712723127,0.09086824049825108,-0.0014616067899634168,0.2921182866688766,-0.04507809092797368,-0.014074429796769494,-0.002793330122795773],[0.7597422633316012,1.0620753029862378e-15,-0.4211857229572132,-0.2785041098930151,-4.554461219085198e-16,-7.565207036335209e-17,-1.1972234377497408e-16],[0.5012964047637947,-1.884735364042424e-15,-0.20135511261225603,3.5214499961726617,8.849062379955282e-16,7.469987723338874e-17,2.1296647692019003e-16],[0.4270055475859848,3.6356975495990027,-0.217995479701678,-0.04850234017648362,-1.2002088838931548,-0.22692861818303178,-0.035976188078246034],[0.3089241290613905,3.147818571248203,-0.05063235484787306,4.057042212092955,-1.5615758707490517,-0.48756035388241925,-0.0967653427418657],[-0.13382931966870507,0.23769027362010528,0.01957111592221766,0.0858119327735088,-0.2453403358140412,1.1766698118827974,0.19920625763633062],[0.2153770032527638,0.2747677315687227,0.007226431877942208,0.06873882718898641,-0.1735822343669529,-1.2034702916664421,1.608029438407181],[0.22106586902771602,-3.083012714838847e-17,0.141322810163601,0.09344804751653854,1.5571525850838128e-17,-4.126915545379159e-18,-7.30447355051612e-18],[1.539384838910939,-8.108782230047423e-16,-0.7553856556676396,-1.880712165071395,5.314931478837557e-16,8.72997265710894e-17,2.6802183694038994e-16],[-0.42600194024952376,-9.039555884662696e-16,0.568822655557758,0.37612729667284545,4.12675377343297e-16,5.895362533475671e-17,9.825604222459452e-17],[-0.09128852174706385,0.7041110908921033,0.18881000077869148,0.17160539277292108,-0.2739461105835689,-0.3525118468936103,0.3936792937984054],[0.190696955031445,11.73632078026298,-0.08177868838538375,-1.4408374514921651,-3.319112595318781,-0.6908213656848332,0.25171738176988795],[-0.5539842797626444,2.3369202910280995,0.6931073989035543,0.5677796919984064,-0.8425383538510325,-0.1040662324196495,-0.1477946691252618]],"state_rows":[14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33],"VI":{"y":17,"yf":16,"pinf":32,"r":18,"rrf":10,"c":30,"inve":31,"lab":39,"w":33},"shocks":[{"key":"ea","label":"Technology","idx":0,"rho":0.7},{"key":"eb","label":"Risk premium (demand)","idx":1,"rho":0.7},{"key":"eg","label":"Govt spending","idx":2,"rho":0.7},{"key":"eqs","label":"Investment tech","idx":3,"rho":0.7},{"key":"em","label":"Monetary policy","idx":4,"rho":0.7},{"key":"epinf","label":"Price markup","idx":5,"rho":0.7},{"key":"ew","label":"Wage markup","idx":6,"rho":0.7}],"params":{"ctrend":0.3982,"constepinf":0.7,"crr":0.8762,"crpi":1.488,"cry":0.0593,"crdy":0.2347,"cprobp":0.6,"cprobw":0.8087,"chabb":0.6361,"csigma":1.5},"r_star_real":0.7455168245013022,"r_nom_ss":3.545516824501302};
+const GHX = D.ghx, GHU = D.ghu;
+const SR  = D.state_rows;
+const VI  = D.VI;
+const P   = D.params;
+const TREND_Q = P.ctrend;
+const PI_TGT  = P.constepinf;
+const R_STAR_REAL = D.r_star_real;
+const R_NOM_SS = D.r_nom_ss;
+
+// HP filter
+function hpFilter(y, lam=1600) {
+  const n = y.length;
+  const a = new Array(n).fill(0), b = new Array(n).fill(0),
+        c = new Array(n).fill(0), d = new Array(n).fill(0),
+        e = new Array(n).fill(0);
+  for (let i=2;i<n-2;i++) {
+    a[i]+=lam*1; b[i]+=lam*-4; c[i]+=lam*6; d[i]+=lam*-4; e[i]+=lam*1;
+  }
+  if(n>2){ c[0]+=lam*1;d[0]+=lam*-2;e[0]+=lam*1; }
+  if(n>3){ b[1]+=lam*-2;c[1]+=lam*5;d[1]+=lam*-4;e[1]+=lam*1; }
+  if(n>3){ a[n-2]+=lam*1;b[n-2]+=lam*-4;c[n-2]+=lam*5;d[n-2]+=lam*-2; }
+  if(n>2){ a[n-1]+=lam*1;b[n-1]+=lam*-2;c[n-1]+=lam*1; }
+  for(let i=0;i<n;i++) c[i]+=1;
+
+  const A = Array.from({length:n},()=>new Array(n).fill(0));
+  for(let i=0;i<n;i++){
+    if(i-2>=0) A[i][i-2]=a[i];
+    if(i-1>=0) A[i][i-1]=b[i];
+    A[i][i]=c[i];
+    if(i+1<n)  A[i][i+1]=d[i];
+    if(i+2<n)  A[i][i+2]=e[i];
+  }
+  const rhs=[...y];
+  for(let col=0;col<n;col++){
+    let mx=col;
+    for(let r=col+1;r<n;r++) if(Math.abs(A[r][col])>Math.abs(A[mx][col])) mx=r;
+    [A[col],A[mx]]=[A[mx],A[col]]; [rhs[col],rhs[mx]]=[rhs[mx],rhs[col]];
+    const pv=A[col][col]; if(Math.abs(pv)<1e-14) continue;
+    for(let r=col+1;r<n;r++){
+      const f=A[r][col]/pv;
+      for(let k=col;k<n;k++) A[r][k]-=f*A[col][k];
+      rhs[r]-=f*rhs[col];
+    }
+  }
+  const tr=new Array(n).fill(0);
+  for(let i=n-1;i>=0;i--){
+    let s=rhs[i];
+    for(let j=i+1;j<n;j++) s-=A[i][j]*tr[j];
+    tr[i]=s/A[i][i];
+  }
+  return tr;
+}
+
+// IRF propagation
+function propagate(shock_col, size, T) {
+  const nV = GHX.length;
+  const path = Array.from({length:T},()=>new Array(nV).fill(0));
+  for(let v=0;v<nV;v++) path[0][v] = GHU[v][shock_col]*size;
+  for(let t=1;t<T;t++){
+    const sv = SR.map(r=>path[t-1][r]);
+    for(let v=0;v<nV;v++){
+      let s=0;
+      for(let k=0;k<sv.length;k++) s+=GHX[v][k]*sv[k];
+      path[t][v]=s;
+    }
+  }
+  return path;
+}
+
+// Combine shocks
+function computeIRF(entries, T) {
+  const nV = GHX.length;
+  const combined = Array.from({length:T},()=>new Array(nV).fill(0));
+  for(const e of entries){
+    const base = propagate(e.shockIdx, e.size, T);
+    const mr = e.modelRho || 0.01;
+    const ur = e.rho;
+    for(let t=0;t<T;t++){
+      const scale = t===0 ? 1.0 : Math.pow(ur/Math.max(mr,0.001), t);
+      for(let v=0;v<nV;v++) combined[t][v]+=base[t][v]*scale;
+    }
+  }
+  return combined;
+}
+
+// Chart factory
+const dark=()=>window.matchMedia('(prefers-color-scheme:dark)').matches;
+const gc=()=>dark()?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)';
+const tc=()=>dark()?'#777':'#999';
+const zc=()=>dark()?'rgba(255,255,255,.2)':'rgba(0,0,0,.15)';
+
+function ds(data,color,dash=[],width=1.8,label=''){
+  return{data,label,borderColor:color,borderWidth:width,
+          borderDash:dash,pointRadius:0,tension:0.3,fill:false};
+}
+
+function mkChart(id,datasets,showLegend=true){
+  return new Chart(document.getElementById(id),{
+    type:'line', data:{labels:[],datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:{duration:180},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:showLegend, position:'top', labels:{font:{size:10}, color:tc(), boxWidth:12}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label||''}: ${c.parsed.y.toFixed(3)}`}}
+      },
+      scales:{
+        x:{grid:{color:gc()},ticks:{color:tc(),font:{size:10},maxTicksLimit:9},
+            title:{display:true,text:'quarters',color:tc(),font:{size:10}}},
+        y:{grid:{color:ctx=>ctx.tick.value===0?zc():gc(),
+                  lineWidth:ctx=>ctx.tick.value===0?1.5:1},
+            ticks:{color:tc(),font:{size:10},callback:v=>v.toFixed(2)}}
+      }
+    }
+  });
+}
+
+const BL='#378ADD', TE='#1D9E75', CO='#D85A30', OR='#E68A2E';
+
+const charts={
+  y:   mkChart('c-y',  [
+    ds([],BL,[],1.9,'NK output (sticky prices)'),
+    ds([],TE,[6,4],1.4,'Flex-price output y*'),
+    ds([],CO,[3,3],1.2,'HP trend')
+  ], true),
+  gap: mkChart('c-gap',[
+    ds([],OR,[],1.9,'Gap: y − y* (sticky − flex)'),
+    ds([],CO,[4,3],1.4,'Gap: y − HP (statistical)'),
+    ds([],BL,[6,4],1.3,'Gap: y − trend (deterministic)')
+  ], true),
+  pi:  mkChart('c-pi', [
+    ds([],BL,[],1.9,'Inflation (sticky prices)'),
+    ds([],TE,[6,4],1.3,'Inflation target')
+  ], true),
+  r:   mkChart('c-r',  [
+    ds([],BL,[],1.9,'Nominal interest rate'),
+    ds([],TE,[6,4],1.4,'Natural rate r* (flex prices)')
+  ], true),
+};
+
+// Shock UI
+const shockState={};
+D.shocks.forEach(sh=>{
+  shockState[sh.key]={active:false,size:1.0,rho:sh.rho};
+});
+
+function buildGrid(){
+  const grid=document.getElementById('shock-grid');
+  D.shocks.forEach(sh=>{
+    const block=document.createElement('div');
+    block.className='shock-block';
+    block.innerHTML=`
+      <div class="shock-head">
+        <label class="tog">
+          <input type="checkbox" id="chk-${sh.key}" onchange="toggleShock('${sh.key}')">
+          <div class="tog-track"></div><div class="tog-thumb"></div>
+        </label>
+        <span class="shock-name">${sh.label}</span>
+        <span class="shock-val" id="sv-${sh.key}">1.0σ</span>
+      </div>
+      <div class="sl-row"><span>Size (σ)</span><span id="sv2-${sh.key}">1.0</span></div>
+      <input type="range" min="0.1" max="3" step="0.1" value="1"
+             oninput="setSz('${sh.key}',this.value)">
+      <div class="sl-row"><span>Persistence ρ</span><span id="rv-${sh.key}">${sh.rho.toFixed(2)}</span></div>
+      <input type="range" min="0" max="0.98" step="0.01" value="${sh.rho}"
+             oninput="setRho('${sh.key}',this.value)">
+    `;
+    grid.appendChild(block);
+  });
+}
+
+function toggleShock(k){shockState[k].active=document.getElementById('chk-'+k).checked;update();}
+function setSz(k,v){shockState[k].size=+v;document.getElementById('sv-'+k).textContent=parseFloat(v).toFixed(1)+'σ';document.getElementById('sv2-'+k).textContent=parseFloat(v).toFixed(1);update();}
+function setRho(k,v){shockState[k].rho=+v;document.getElementById('rv-'+k).textContent=parseFloat(v).toFixed(2);update();}
+
+// Main update
+function update(){
+  const T=+document.getElementById('sl-T').value;
+  document.getElementById('v-T').textContent=T;
+  const Q=Array.from({length:T},(_,i)=>i);
+
+  const active=D.shocks.filter(sh=>shockState[sh.key].active).map(sh=>{
+    return{shockIdx:sh.idx, size:shockState[sh.key].size,
+            rho:shockState[sh.key].rho, modelRho:sh.rho};
+  });
+
+  const zeros=new Array(T).fill(0);
+  if(!active.length){
+    const tr=Q.map(t=>TREND_Q*t);
+    const hp=hpFilter(tr);
+    setChart(charts.y,Q,[tr,tr,hp]);
+    setChart(charts.gap,Q,[zeros,zeros,zeros]);
+    setChart(charts.pi,Q,[zeros.map(()=>PI_TGT*4),zeros.map(()=>PI_TGT*4)]);
+    setChart(charts.r,Q,[zeros.map(()=>R_NOM_SS),zeros.map(()=>R_STAR_REAL)]);
+    return;
+  }
+
+  const path=computeIRF(active,T);
+  const get=vi=>path.map(s=>s[vi]);
+
+  const y_dev=get(VI.y), yf_dev=get(VI.yf), pi_dev=get(VI.pinf);
+  const r_dev=get(VI.r), rrf_dev=get(VI.rrf);
+
+  const trend=Q.map(t=>TREND_Q*t);
+  const y_lev=y_dev.map((v,t)=>v+trend[t]);
+  const yf_lev=yf_dev.map((v,t)=>v+trend[t]);
+  const hp=hpFilter(y_lev);
+
+  const gap_flex=y_dev.map((v,i)=>v-yf_dev[i]);
+  const gap_hp=y_lev.map((v,i)=>v-hp[i]);
+  const gap_trend=y_dev;
+
+  const pi_ann=pi_dev.map(v=>v*4+PI_TGT*4);
+  const tgt_line=zeros.map(()=>PI_TGT*4);
+  const r_ann=r_dev.map(v=>v*4+R_NOM_SS);
+  const rrf_ann=rrf_dev.map(v=>v*4+R_STAR_REAL);
+
+  setChart(charts.y,Q,[y_lev,yf_lev,hp]);
+  setChart(charts.gap,Q,[gap_flex,gap_hp,gap_trend]);
+  setChart(charts.pi,Q,[pi_ann,tgt_line]);
+  setChart(charts.r,Q,[r_ann,rrf_ann]);
+}
+
+function setChart(ch,labels,series){
+  ch.data.labels=labels;
+  series.forEach((s,i)=>{ch.data.datasets[i].data=s;});
+  ch.update('none');
+}
+
+buildGrid();
+document.getElementById('sl-T').addEventListener('input',update);
+update();
+</script>
+</body>
+</html>

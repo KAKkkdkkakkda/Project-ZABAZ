@@ -68,7 +68,7 @@ for i = 1:size(shock_config,1)
     fprintf('  shock %s: js_idx=%d\n', shock_config{i,1}, idx-1);
 end
 
-%% 7. Quick IRF verification
+%% 7. Quick IRF verification with plots
 fprintf('\nVerification (technology shock):\n');
 T = 40;
 ea_js  = shock_config{1,3};           % 0-indexed
@@ -81,14 +81,128 @@ for t = 2:T
     irf(:,t)     = oo_.dr.ghx * state_vec;
 end
 
+% Индексы переменных
 y_dr  = VI_dr.y  + 1;
 yf_dr = VI_dr.yf + 1;
 pi_dr = VI_dr.pinf + 1;
+r_dr  = VI_dr.r + 1;
+rrf_dr = VI_dr.rrf + 1;
+c_dr  = VI_dr.c + 1;
+inve_dr = VI_dr.inve + 1;
+lab_dr = VI_dr.lab + 1;
+w_dr = VI_dr.w + 1;
 
-fprintf('  y[1]  = %.4f  (expect +)\n', irf(y_dr,  1));
-fprintf('  yf[1] = %.4f  (expect + and larger)\n', irf(yf_dr, 1));
-fprintf('  pi[1] = %.4f  (expect -)\n', irf(pi_dr, 1));
-fprintf('  gap   = %.4f  (expect -)\n', irf(y_dr,1) - irf(yf_dr,1));
+% Вывод первых периодов
+fprintf('\nImpact (t=1):\n');
+fprintf('  y[1]   = %.4f  (should be +)\n', irf(y_dr, 1));
+fprintf('  yf[1]  = %.4f  (should be + and larger)\n', irf(yf_dr, 1));
+fprintf('  pi[1]  = %.4f  (should be -)\n', irf(pi_dr, 1));
+fprintf('  gap    = %.4f  (should be -)\n', irf(y_dr,1) - irf(yf_dr,1));
+fprintf('  r[1]   = %.4f  (should be -)\n', irf(r_dr, 1));
+fprintf('  rrf[1] = %.4f  (should be -)\n', irf(rrf_dr, 1));
+
+%% 7. Quick IRF verification with plots
+y_dr   = VI_dr.y   + 1;
+yf_dr  = VI_dr.yf  + 1;
+pi_dr  = VI_dr.pinf + 1;
+r_dr   = VI_dr.r   + 1;
+rrf_dr = VI_dr.rrf + 1;
+c_dr   = VI_dr.c   + 1;
+inve_dr = VI_dr.inve + 1;
+lab_dr  = VI_dr.lab + 1;
+w_dr    = VI_dr.w   + 1;
+
+fprintf('\nVerification (technology shock):\n');
+T = 40;
+ea_js  = shock_config{1,3};           
+ea_mat = ea_js + 1;                   
+
+irf = zeros(n_endo, T);
+irf(:,1) = oo_.dr.ghu(:, ea_mat);
+for t = 2:T
+    state_vec    = irf(state_rows_dr, t-1);
+    irf(:,t)     = oo_.dr.ghx * state_vec;
+end
+
+% Найдем индексы
+var_names_dr = cellstr(M_.endo_names(oo_.dr.order_var, :));
+y_idx   = find(strcmp(var_names_dr, 'y'));
+yf_idx  = find(strcmp(var_names_dr, 'yf'));
+pi_idx  = find(strcmp(var_names_dr, 'pinf'));
+r_idx   = find(strcmp(var_names_dr, 'r'));
+rrf_idx = find(strcmp(var_names_dr, 'rrf'));
+
+% Параметры для уровней
+trend_q = 0.3982;        % % per quarter
+pi_target = 0.7;         % % per quarter
+r_star_real = 1.0;       % реальная ставка в SS
+r_nom_ss = r_star_real + pi_target * 4;
+
+t = (0:T-1)';
+trend = trend_q * t;
+
+% Переводим в уровни
+y_lev   = irf(y_idx, :)' + trend;
+yf_lev  = irf(yf_idx, :)' + trend;
+pi_ann  = irf(pi_idx, :)' * 4 + pi_target * 4;
+r_ann   = irf(r_idx, :)' * 4 + r_nom_ss;
+rrf_ann = irf(rrf_idx, :)' * 4 + r_star_real;
+
+% HP фильтр
+lam = 1600;
+n = length(y_lev);
+D = zeros(n-2, n);
+for i = 1:n-2
+    D(i,i) = 1; D(i,i+1) = -2; D(i,i+2) = 1;
+end
+A = eye(n) + lam * (D' * D);
+hp_trend = A \ y_lev;
+
+% Три разрыва
+gap_flex = irf(y_idx, :)' - irf(yf_idx, :)';
+gap_hp = y_lev - hp_trend;
+gap_trend = irf(y_idx, :)';
+
+figure('Name', 'SW2007 IRF - Technology Shock', 'Position', [100, 100, 1000, 800]);
+
+% График 1: Output с уровнями
+subplot(2, 2, 1);
+plot(t, y_lev, 'b-', 'LineWidth', 1.5); hold on;
+plot(t, yf_lev, 'r--', 'LineWidth', 1.5);
+plot(t, hp_trend, 'g:', 'LineWidth', 1.5);
+xlabel('Quarters'); ylabel('% level');
+title('Output: Actual, Flexible, HP Trend');
+legend('y (sticky)', 'y^f (flex)', 'HP trend', 'Location', 'best');
+grid on;
+
+% График 2: Output gaps
+subplot(2, 2, 2);
+plot(t, gap_flex, 'b-', 'LineWidth', 1.5); hold on;
+plot(t, gap_hp, 'r--', 'LineWidth', 1.5);
+plot(t, gap_trend, 'g-.', 'LineWidth', 1.5);
+xlabel('Quarters'); ylabel('%');
+title('Output Gaps');
+legend('y - y^f', 'y - HP', 'y - trend', 'Location', 'best');
+grid on;
+
+% График 3: Inflation
+subplot(2, 2, 3);
+plot(t, pi_ann, 'b-', 'LineWidth', 1.5); hold on;
+yline(pi_target*4, 'r--', 'LineWidth', 1.2);
+xlabel('Quarters'); ylabel('% annualised');
+title('Inflation');
+legend('π', 'target', 'Location', 'best');
+grid on;
+
+% График 4: Interest rates
+subplot(2, 2, 4);
+plot(t, r_ann, 'b-', 'LineWidth', 1.5); hold on;
+plot(t, rrf_ann, 'r--', 'LineWidth', 1.5);
+xlabel('Quarters'); ylabel('% annualised');
+title('Interest Rates');
+legend('Nominal', 'Natural r*', 'Location', 'best');
+grid on;
+
 
 %% 8. Pack and export JSON
 out = struct();
@@ -99,7 +213,7 @@ out.VI           = VI_dr;                % 0-indexed DR positions of display var
 out.shock_keys   = shock_config(:,1)';
 out.shock_labels = shock_config(:,2)';
 out.shock_js_idx = cell2mat(shock_config(:,3))';   % 0-indexed
-out.model_rhos   = [0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7];
+out.model_rhos   = [0, 0, 0, 0, 0, 0, 0];
 out.params       = struct( ...
     'ctrend',     M_.params(strcmp(cellstr(M_.param_names),'ctrend')), ...
     'constepinf', M_.params(strcmp(cellstr(M_.param_names),'constepinf')), ...

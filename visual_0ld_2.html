@@ -11,6 +11,11 @@
   --bg:#fff;--bg2:#f5f4f0;--bg3:#eeecea;
   --border:rgba(0,0,0,.09);--border2:rgba(0,0,0,.17);
   --text:#1a1a18;--text2:#5f5e5a;--text3:#888780;
+  /* Semantic colour palette (consistent across all charts):
+       DK = dark grey  → steady-state / BGP reference lines
+       BL = blue       → NK sticky-price economy
+       OR = orange     → flex-price economy & gap from flex prices
+       RD = red        → statistical trend (HP / Kalman) & gap from it  */
   --dk:#3d3d3a;--bl:#2F7CC9;--or:#D4720A;--rd:#C0392B;
   --r:8px;--rl:12px;
 }
@@ -73,8 +78,6 @@ input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;
 .chart-sub{font-size:11px;color:var(--text3);margin-bottom:8px}
 .chart-wrap{position:relative;height:220px}
 .eq{font-size:11px;color:var(--text3);line-height:1.9}
-.filter-params{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:8px;border-top:1px solid var(--border)}
-.filter-param-ctrl{background:var(--bg2);border-radius:var(--r);padding:8px 10px;min-width:140px}
 @media(max-width:650px){
   .chart-grid{grid-template-columns:1fr}
   .page{padding:1rem}
@@ -111,12 +114,6 @@ Deterministic trend (0.398%/qtr, 1.59%/yr) and inflation target (0.70%/qtr, 2.8%
   </div>
 </div>
 
-<!-- Filter hyperparameter sliders (visible only when filter is selected) -->
-<div class="card" id="filter-params-card" style="display:none; margin-top:-0.2rem">
-  <div class="card-title">Filter hyperparameters</div>
-  <div class="filter-params" id="filter-params-container"></div>
-</div>
-
 <div class="legend">
   <div class="leg"><div class="leg-swatch" style="background:var(--dk)"></div>Steady-state / BGP</div>
   <div class="leg"><div class="leg-swatch" style="background:var(--bl)"></div>NK sticky-price economy</div>
@@ -131,7 +128,7 @@ Deterministic trend (0.398%/qtr, 1.59%/yr) and inflation target (0.70%/qtr, 2.8%
 <p class="legend-note">
   HP real-time &amp; Kalman: at each period t only data 0…t is used (pre-seeded with 10 SS quarters for comparability).
   Full-info HP always filters 80 quarters regardless of the horizon slider.
-  Re-application ρ: the same shock re-hits each period with geometrically decaying magnitude (on top of the model's own AR dynamics).
+  Shock re-application ρ: the same shock re-hits each period with geometrically decaying magnitude (on top of the model's own AR dynamics).
 </p>
 
 <div class="chart-grid">
@@ -168,7 +165,7 @@ Deterministic trend (0.398%/qtr, 1.59%/yr) and inflation target (0.70%/qtr, 2.8%
     Smets &amp; Wouters (2007) — medium-scale NK DSGE · Capital accumulation · Investment adjustment costs · Capital utilization<br>
     Habits λ=0.64 · σ=1.50 · Calvo prices ξ_p=0.60 · Calvo wages ξ_w=0.81<br>
     Taylor: ρ=0.876 · φ_π=1.488 · φ_y=0.0593 · φ_Δy=0.2347<br>
-    Solution: Dynare first-order perturbation · Output gap = NK − flex-price output · HP λ=1600 · Kalman: local-level model
+    Solution: Dynare first-order perturbation · Output gap = NK − flex-price output · HP λ=1600 · Kalman: local-level model (q≈1/1600, calibrated to HP-1600)
   </div>
 </div>
 
@@ -184,97 +181,22 @@ const TREND_Q     = P.ctrend;
 const PI_TGT      = P.constepinf;
 const R_STAR_REAL = D.r_star_real;
 const R_NOM_SS    = D.r_nom_ss;
-const HP_PAD      = 10;
-const HP_FULL_WIN = 80;
+const HP_PAD      = D.hp_pad;         // pre-shock SS quarters prepended before filtering
+const HP_FULL_WIN = D.hp_full_window; // fixed window for full-info HP
 
-let activeFilter = D.default_filter;
+let activeFilter = D.default_filter;  // "hp_full" | "hp_rt" | "kalman"
 
-// HP parameters
-let hpLambda = 1600;
-
-// Kalman parameters
-let kalmanQ = 1/1600;     // sig2_eta (trend flexibility)
-let kalmanR = 0.5;        // sig2_xi (cycle volatility)
-let kalmanRho = 0.85;     // rho_c (cycle persistence)
-const kalmanEps = 1.0;    // sig2_eps (measurement noise, fixed)
-
-// ── UI update for filter parameters ─────────────────────────────────────────
-function updateFilterParamsUI() {
-  const container = document.getElementById('filter-params-container');
-  const card = document.getElementById('filter-params-card');
-  
-  if (activeFilter === 'hp_full' || activeFilter === 'hp_rt') {
-    card.style.display = 'block';
-    container.innerHTML = `
-      <div class="filter-param-ctrl">
-        <div class="ctrl-label">HP λ (smoothing)</div>
-        <div class="ctrl-row"><span class="ctrl-name">λ</span><span class="ctrl-val" id="v-hp-lambda">${hpLambda}</span></div>
-        <input type="range" min="100" max="10000" step="100" value="${hpLambda}" oninput="setHpLambda(this.value)">
-        <div class="ctrl-label" style="margin-top:6px">Lower λ = more flexible trend</div>
-      </div>
-    `;
-  } else if (activeFilter === 'kalman') {
-    card.style.display = 'block';
-    container.innerHTML = `
-      <div class="filter-param-ctrl">
-        <div class="ctrl-label">Kalman q (trend flexibility)</div>
-        <div class="ctrl-row"><span class="ctrl-name">q</span><span class="ctrl-val" id="v-kalman-q">${kalmanQ.toFixed(6)}</span></div>
-        <input type="range" min="0.0001" max="0.01" step="0.0001" value="${kalmanQ}" oninput="setKalmanQ(this.value)">
-        <div class="ctrl-label" style="margin-top:4px">Higher q = trend adapts faster</div>
-      </div>
-      <div class="filter-param-ctrl">
-        <div class="ctrl-label">Kalman r (cycle volatility)</div>
-        <div class="ctrl-row"><span class="ctrl-name">r</span><span class="ctrl-val" id="v-kalman-r">${kalmanR.toFixed(3)}</span></div>
-        <input type="range" min="0.01" max="2" step="0.01" value="${kalmanR}" oninput="setKalmanR(this.value)">
-        <div class="ctrl-label" style="margin-top:4px">Higher r = more volatile cycle</div>
-      </div>
-      <div class="filter-param-ctrl">
-        <div class="ctrl-label">Kalman ρ (cycle persistence)</div>
-        <div class="ctrl-row"><span class="ctrl-name">ρ</span><span class="ctrl-val" id="v-kalman-rho">${kalmanRho.toFixed(3)}</span></div>
-        <input type="range" min="0" max="0.99" step="0.01" value="${kalmanRho}" oninput="setKalmanRho(this.value)">
-        <div class="ctrl-label" style="margin-top:4px">Higher ρ = slower cycle decay</div>
-      </div>
-    `;
-  } else {
-    card.style.display = 'none';
-  }
-}
-
-function setHpLambda(val) {
-  hpLambda = parseFloat(val);
-  document.getElementById('v-hp-lambda').textContent = hpLambda;
-  update();
-}
-
-function setKalmanQ(val) {
-  kalmanQ = parseFloat(val);
-  document.getElementById('v-kalman-q').textContent = kalmanQ.toFixed(6);
-  update();
-}
-
-function setKalmanR(val) {
-  kalmanR = parseFloat(val);
-  document.getElementById('v-kalman-r').textContent = kalmanR.toFixed(3);
-  update();
-}
-
-function setKalmanRho(val) {
-  kalmanRho = parseFloat(val);
-  document.getElementById('v-kalman-rho').textContent = kalmanRho.toFixed(3);
-  update();
-}
-
-// ── HP filter core ─────────────────────────────────────────────────────────
-function hpCore(y, lam) {
+// ── HP filter core (pentadiagonal Gaussian elimination) ──────────────────────
+function hpCore(y, lam=1600) {
   const n = y.length;
   const a=new Array(n).fill(0),b=new Array(n).fill(0),
         c=new Array(n).fill(0),d=new Array(n).fill(0),
         e=new Array(n).fill(0);
-  for(let i=2;i<n-2;i++){ a[i]+=lam; b[i]-=4*lam; c[i]+=6*lam; d[i]-=4*lam; e[i]+=lam; }
-  if(n>2){ c[0]+=lam; d[0]-=2*lam; e[0]+=lam; }
-  if(n>3){ b[1]-=2*lam; c[1]+=5*lam; d[1]-=4*lam; e[1]+=lam; }
-  if(n>3){ a[n-2]+=lam; b[n-2]-=4*lam; c[n-2]+=5*lam; d[n-2]-=2*lam; }
-  if(n>2){ a[n-1]+=lam; b[n-1]-=2*lam; c[n-1]+=lam; }
+  for(let i=2;i<n-2;i++){a[i]+=lam;b[i]-=4*lam;c[i]+=6*lam;d[i]-=4*lam;e[i]+=lam;}
+  if(n>2){c[0]+=lam;d[0]-=2*lam;e[0]+=lam;}
+  if(n>3){b[1]-=2*lam;c[1]+=5*lam;d[1]-=4*lam;e[1]+=lam;}
+  if(n>3){a[n-2]+=lam;b[n-2]-=4*lam;c[n-2]+=5*lam;d[n-2]-=2*lam;}
+  if(n>2){a[n-1]+=lam;b[n-1]-=2*lam;c[n-1]+=lam;}
   for(let i=0;i<n;i++) c[i]+=1;
   const A=Array.from({length:n},()=>new Array(n).fill(0));
   for(let i=0;i<n;i++){
@@ -300,113 +222,141 @@ function hpCore(y, lam) {
   return tr;
 }
 
+// Build a level series from a log-deviation array: prepend HP_PAD SS values,
+// optionally extend to fullLen, adding deterministic trend throughout.
 function buildLevel(y_dev, fullLen) {
   const T = y_dev.length;
   const total = Math.max(T, fullLen) + HP_PAD;
   const lev = new Array(total);
-  for(let i=0;i<HP_PAD;i++) lev[i] = TREND_Q*(i-HP_PAD);
-  for(let i=0;i<T;i++) lev[HP_PAD+i] = y_dev[i] + TREND_Q*i;
-  const fillTo = Math.max(fullLen, T) + HP_PAD;
-  for(let i=HP_PAD+T; i<fillTo; i++) lev[i] = TREND_Q*(i-HP_PAD);
+  for(let i=0;i<HP_PAD;i++)    lev[i] = TREND_Q*(i-HP_PAD);       // pre-shock SS
+  for(let i=0;i<T;i++)         lev[HP_PAD+i] = y_dev[i]+TREND_Q*i; // shock path
+  for(let i=T;i<total-HP_PAD;i++) lev[HP_PAD+i] = TREND_Q*i;      // tail zeros
   return lev;
 }
 
-function hpFull(y_dev, T) {
+// Full-information HP: always run on HP_FULL_WIN quarters (independent of horizon).
+// Returns trend in level terms for the T visualised quarters.
+function hpFull(y_dev, T, lam=1600) {
   const lev = buildLevel(y_dev, HP_FULL_WIN);
-  const tr = hpCore(lev, hpLambda);
+  const tr  = hpCore(lev, lam);
   return tr.slice(HP_PAD, HP_PAD+T);
 }
 
-function hpRealtime(y_dev, T) {
+// Real-time HP: at each t, re-run HP on all data seen so far (pre-seeded with
+// HP_PAD SS quarters). Only the last point of each run is kept — the current
+// real-time trend estimate. This mimics a statistical agency updating its
+// trend estimate as new data arrives.
+function hpRealtime(y_dev, T, lam=1600) {
   const result = new Array(T);
   for(let t=0;t<T;t++) {
     const slice = new Array(HP_PAD).fill(0);
     for(let k=0;k<=t;k++) slice.push(y_dev[k]);
     const lev = slice.map((v,i)=>v+TREND_Q*(i-HP_PAD));
-    const tr = hpCore(lev, hpLambda);
+    const tr  = hpCore(lev, lam);
     result[t] = tr[tr.length-1];
   }
   return result;
 }
 
+// Kalman filter — local-level model: trend (random walk with drift) + AR(1) gap.
+// Purely statistical, no connection to the DSGE model.
+// Signal-to-noise ratio q≈1/1600 calibrated to approximate HP-1600 asymptotically
+// (Harvey & Jaeger 1993). Pre-seeded with HP_PAD SS quarters for comparability.
+// Returns trend estimates in level terms.
 function kalmanFilter(y_dev, T) {
-  // State [trend_dev, cycle]
-  let x = [0, 0];
-  let P = [[10, 0], [0, 10]];
-  
-  // Warm-up with HP_PAD zeros
+  // Hyperparameters (normalised to obs noise = 1)
+  const sig2_eta = 1/1600; // trend innovation variance
+  const sig2_xi  = 0.5;    // gap innovation variance
+  const sig2_eps = 1.0;    // measurement noise variance
+  const rho_c    = 0.85;   // gap AR(1) coefficient
+
+  // State [tau_dev, c] where tau_dev is trend log-deviation from BGP
+  // Transition: tau_dev_t = tau_dev_{t-1} + eta_t
+  //             c_t       = rho_c * c_{t-1} + xi_t
+  // Measurement: y_dev_t  = tau_dev_t + c_t + eps_t
+
+  let x  = [0, 0];                          // state mean
+  let Pk = [[10, 0],[0, 10]];               // state covariance (diffuse init)
+
+  // Warm-up: feed HP_PAD pre-shock observations (y_dev=0 on BGP)
   for(let i=0;i<HP_PAD;i++) {
-    [x, P] = kStep(x, P, 0, kalmanRho, kalmanQ, kalmanR, kalmanEps);
+    [x,Pk] = kStep(x, Pk, 0, rho_c, sig2_eta, sig2_xi, sig2_eps);
   }
-  
+
   const trend_lev = new Array(T);
   for(let t=0;t<T;t++) {
-    [x, P] = kStep(x, P, y_dev[t], kalmanRho, kalmanQ, kalmanR, kalmanEps);
-    trend_lev[t] = x[0] + TREND_Q*t;
+    [x,Pk] = kStep(x, Pk, y_dev[t], rho_c, sig2_eta, sig2_xi, sig2_eps);
+    trend_lev[t] = x[0] + TREND_Q*t;  // trend in level terms
   }
   return trend_lev;
 }
 
-function kStep(x, P, y_obs, rho_c, q, r, eps_var) {
+function kStep(x, Pv, y_obs, rho_c, sig2_eta, sig2_xi, sig2_eps) {
   // Predict
-  const xp = [x[0], rho_c * x[1]];
+  const xp = [x[0], rho_c*x[1]];
   const Pp = [
-    [P[0][0] + q,            rho_c * P[0][1]],
-    [rho_c * P[1][0], rho_c*rho_c * P[1][1] + r]
+    [Pv[0][0]+sig2_eta,            rho_c*Pv[0][1]           ],
+    [rho_c*Pv[1][0],   rho_c*rho_c*Pv[1][1]+sig2_xi]
   ];
   // Innovation
-  const innov = y_obs - (xp[0] + xp[1]);
-  const S = Pp[0][0] + Pp[1][1] + 2*Pp[0][1] + eps_var;
+  const innov = y_obs - (xp[0]+xp[1]);
+  const S     = Pp[0][0]+Pp[1][1]+2*Pp[0][1]+sig2_eps;
   // Kalman gain
-  const K = [(Pp[0][0] + Pp[0][1]) / S, (Pp[1][0] + Pp[1][1]) / S];
+  const K = [(Pp[0][0]+Pp[0][1])/S, (Pp[1][0]+Pp[1][1])/S];
   // Update
-  const xu = [xp[0] + K[0]*innov, xp[1] + K[1]*innov];
+  const xu = [xp[0]+K[0]*innov, xp[1]+K[1]*innov];
   const Pu = [
-    [Pp[0][0] - K[0]*(Pp[0][0] + Pp[0][1]), Pp[0][1] - K[0]*(Pp[0][1] + Pp[1][1])],
-    [Pp[1][0] - K[1]*(Pp[0][0] + Pp[0][1]), Pp[1][1] - K[1]*(Pp[0][1] + Pp[1][1])]
+    [Pp[0][0]-K[0]*(Pp[0][0]+Pp[0][1]), Pp[0][1]-K[0]*(Pp[0][1]+Pp[1][1])],
+    [Pp[1][0]-K[1]*(Pp[0][0]+Pp[0][1]), Pp[1][1]-K[1]*(Pp[0][1]+Pp[1][1])]
   ];
   return [xu, Pu];
 }
 
+// Dispatch to active filter; returns trend in LEVEL terms (log %).
 function computeStatTrend(y_dev, T) {
-  if(activeFilter === 'hp_full') return hpFull(y_dev, T);
-  if(activeFilter === 'hp_rt')   return hpRealtime(y_dev, T);
-  if(activeFilter === 'kalman')  return kalmanFilter(y_dev, T);
+  if(activeFilter==='hp_full') return hpFull(y_dev, T);
+  if(activeFilter==='hp_rt')   return hpRealtime(y_dev, T);
+  if(activeFilter==='kalman')  return kalmanFilter(y_dev, T);
   return hpFull(y_dev, T);
 }
 
-// ── IRF propagation ────────────────────────────────────────────────────────
+// ── IRF propagation ───────────────────────────────────────────────────────────
 function propagate(shock_col, size, T) {
-  const nV = GHX.length;
-  const path = Array.from({length:T}, ()=>new Array(nV).fill(0));
-  for(let v=0;v<nV;v++) path[0][v] = GHU[v][shock_col] * size;
-  for(let t=1;t<T;t++) {
-    const sv = SR.map(r=>path[t-1][r]);
-    for(let v=0;v<nV;v++) {
-      let s=0; for(let k=0;k<sv.length;k++) s += GHX[v][k] * sv[k];
-      path[t][v] = s;
+  const nV=GHX.length;
+  const path=Array.from({length:T},()=>new Array(nV).fill(0));
+  for(let v=0;v<nV;v++) path[0][v]=GHU[v][shock_col]*size;
+  for(let t=1;t<T;t++){
+    const sv=SR.map(r=>path[t-1][r]);
+    for(let v=0;v<nV;v++){
+      let s=0; for(let k=0;k<sv.length;k++) s+=GHX[v][k]*sv[k];
+      path[t][v]=s;
     }
   }
   return path;
 }
 
+// Combine multiple shocks with optional re-application (rho slider).
+// rho=0  → single one-off shock (default).
+// rho>0  → the shock re-hits every subsequent period with magnitude
+//           size * rho^s, layered on top of the model's own state dynamics.
+// Note: the model's ghx already encodes any AR structure from the mod file.
 function computeIRF(entries, T) {
-  const nV = GHX.length;
-  const out = Array.from({length:T}, ()=>new Array(nV).fill(0));
+  const nV=GHX.length;
+  const out=Array.from({length:T},()=>new Array(nV).fill(0));
   for(const e of entries) {
-    const base = propagate(e.shockIdx, 1.0, T);
+    const base=propagate(e.shockIdx,1.0,T);
     for(let s=0;s<T;s++) {
-      const mag = e.size * Math.pow(e.rho, s);
-      if(mag === 0) continue;
+      const mag=e.size*Math.pow(e.rho,s);
+      if(mag===0) continue;
       for(let t=0;t<T-s;t++)
         for(let v=0;v<nV;v++)
-          out[s+t][v] += base[t][v] * mag;
+          out[s+t][v]+=base[t][v]*mag;
     }
   }
   return out;
 }
 
-// ── Chart setup ────────────────────────────────────────────────────────────
+// ── Chart colours (respect dark mode) ────────────────────────────────────────
 const dk=()=>getComputedStyle(document.documentElement).getPropertyValue('--dk').trim();
 const bl=()=>getComputedStyle(document.documentElement).getPropertyValue('--bl').trim();
 const or_=()=>getComputedStyle(document.documentElement).getPropertyValue('--or').trim();
@@ -416,8 +366,8 @@ const gc=()=>dark_mode()?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)';
 const tc=()=>dark_mode()?'#777':'#999';
 const zc=()=>dark_mode()?'rgba(255,255,255,.22)':'rgba(0,0,0,.18)';
 
-function ds(data,colorFn,dash=[],width=1.8,label='') {
-  return {data,label,borderColor:colorFn(),borderWidth:width,
+function ds(data,colorFn,dash=[],width=1.8,label=''){
+  return{data,label,borderColor:colorFn(),borderWidth:width,
           borderDash:dash,pointRadius:0,tension:0.3,fill:false};
 }
 
@@ -444,37 +394,41 @@ function mkChart(id, datasets) {
 }
 
 const charts = {
+  // Output levels: BGP (dark solid), NK (blue solid), flex y* (orange dash), stat trend (red dot)
   y: mkChart('c-y',[
     ds([],dk,[8,4],1.4,'BGP trend'),
     ds([],bl,[],2.0,'NK output (sticky)'),
     ds([],or_,[6,4],1.6,'Flex-price output y*'),
     ds([],rd,[3,3],1.4,'Statistical trend'),
   ]),
+  // Output gaps: flex gap (orange), stat gap (red dash), BGP gap (dark long-dash)
   gap: mkChart('c-gap',[
     ds([],or_,[],2.0,'Gap: y − y* (NK − flex)'),
     ds([],rd,[5,3],1.6,'Gap: y − stat. trend'),
     ds([],dk,[8,4],1.3,'Gap: y − BGP'),
   ]),
+  // Inflation deviations: NK (blue), zero reference (dark dash)
   pi: mkChart('c-pi',[
     ds([],bl,[],2.0,'Inflation deviation (NK)'),
     ds([],dk,[6,4],1.2,'Zero = target'),
   ]),
+  // Rate deviations: nominal (blue), natural r* (orange dash)
   r: mkChart('c-r',[
     ds([],bl,[],2.0,'Nominal rate deviation'),
     ds([],or_,[6,4],1.6,'Natural rate r* deviation'),
   ]),
 };
 
-// ── Shock UI ───────────────────────────────────────────────────────────────
-const shockState = {};
-D.shocks.forEach(sh=>{ shockState[sh.key] = {active:false, size:1.0, rho:0}; });
+// ── Shock UI ──────────────────────────────────────────────────────────────────
+const shockState={};
+D.shocks.forEach(sh=>{ shockState[sh.key]={active:false,size:1.0,rho:0}; });
 
 function buildGrid() {
-  const grid = document.getElementById('shock-grid');
+  const grid=document.getElementById('shock-grid');
   D.shocks.forEach(sh=>{
-    const b = document.createElement('div');
-    b.className = 'shock-block';
-    b.innerHTML = `
+    const b=document.createElement('div');
+    b.className='shock-block';
+    b.innerHTML=`
       <div class="shock-head">
         <label class="tog">
           <input type="checkbox" id="chk-${sh.key}" onchange="toggleShock('${sh.key}')">
@@ -487,50 +441,56 @@ function buildGrid() {
         <span>Size (σ) — negative = adverse direction</span>
         <span id="sv2-${sh.key}">+1.0</span>
       </div>
-      <input type="range" min="-3" max="3" step="0.1" value="1" oninput="setSz('${sh.key}',this.value)">
+      <input type="range" min="-3" max="3" step="0.1" value="1"
+             oninput="setSz('${sh.key}',this.value)">
       <div class="sl-row">
         <span>Re-application ρ (shock repeats each period, decaying)</span>
         <span id="rv-${sh.key}">0.00</span>
       </div>
-      <input type="range" min="0" max="0.98" step="0.01" value="0" oninput="setRho('${sh.key}',this.value)">
+      <input type="range" min="0" max="0.98" step="0.01" value="0"
+             oninput="setRho('${sh.key}',this.value)">
     `;
     grid.appendChild(b);
   });
 }
 
-function toggleShock(k){ shockState[k].active = document.getElementById('chk-'+k).checked; update(); }
+function toggleShock(k){
+  shockState[k].active=document.getElementById('chk-'+k).checked;
+  update();
+}
 function setSz(k,v){
-  shockState[k].size = +v;
-  const s = (+v>=0?'+':'') + parseFloat(v).toFixed(1);
-  document.getElementById('sv-'+k).textContent = s+'σ';
-  document.getElementById('sv2-'+k).textContent = s;
+  shockState[k].size=+v;
+  const s=(+v>=0?'+':'')+parseFloat(v).toFixed(1);
+  document.getElementById('sv-'+k).textContent=s+'σ';
+  document.getElementById('sv2-'+k).textContent=s;
   update();
 }
 function setRho(k,v){
-  shockState[k].rho = +v;
-  document.getElementById('rv-'+k).textContent = parseFloat(v).toFixed(2);
+  shockState[k].rho=+v;
+  document.getElementById('rv-'+k).textContent=parseFloat(v).toFixed(2);
   update();
 }
-function setFilter(f) {
-  activeFilter = f;
+function setFilter(f){
+  activeFilter=f;
   document.querySelectorAll('.ftab').forEach(b=>b.classList.remove('active'));
   document.getElementById('ftab-'+f).classList.add('active');
-  updateFilterParamsUI();
   update();
 }
 
-// ── Main update ────────────────────────────────────────────────────────────
+// ── Main update ───────────────────────────────────────────────────────────────
 function update() {
-  const T = +document.getElementById('sl-T').value;
-  document.getElementById('v-T').textContent = T;
-  const Q = Array.from({length:T}, (_,i)=>i);
+  const T   = +document.getElementById('sl-T').value;
+  document.getElementById('v-T').textContent=T;
+  const Q     = Array.from({length:T},(_,i)=>i);
   const zeros = new Array(T).fill(0);
-  const trend = Q.map(t=>TREND_Q*t);
+  const trend = Q.map(t=>TREND_Q*t);   // deterministic BGP level (log %)
 
-  const active = D.shocks.filter(sh=>shockState[sh.key].active)
-                         .map(sh=>({shockIdx:sh.idx, size:shockState[sh.key].size, rho:shockState[sh.key].rho}));
+  const active = D.shocks
+    .filter(sh=>shockState[sh.key].active)
+    .map(sh=>({shockIdx:sh.idx, size:shockState[sh.key].size, rho:shockState[sh.key].rho}));
 
   if(!active.length) {
+    // No shock selected: all lines sit on the BGP / zero-deviation baseline
     const stat0 = computeStatTrend(zeros, T);
     setChart(charts.y,   Q, [trend, trend, trend, stat0]);
     setChart(charts.gap, Q, [zeros, zeros, zeros]);
@@ -539,8 +499,8 @@ function update() {
     return;
   }
 
-  const path = computeIRF(active, T);
-  const get = vi => path.map(s=>s[vi]);
+  const path    = computeIRF(active, T);
+  const get     = vi => path.map(s=>s[vi]);
 
   const y_dev   = get(VI.y);
   const yf_dev  = get(VI.yf);
@@ -548,17 +508,22 @@ function update() {
   const r_dev   = get(VI.r);
   const rrf_dev = get(VI.rrf);
 
+  // Output in log-level terms (deviation from t=0 + BGP trend)
   const y_lev   = y_dev.map((v,t)=>v+trend[t]);
   const yf_lev  = yf_dev.map((v,t)=>v+trend[t]);
   const stat_tr = computeStatTrend(y_dev, T);
 
-  const gap_flex = y_dev.map((v,i)=>v - yf_dev[i]);
-  const gap_stat = y_lev.map((v,i)=>v - stat_tr[i]);
-  const gap_bgp  = y_dev;
+  // Output gaps (log %, all comparable)
+  const gap_flex = y_dev.map((v,i)=>v-yf_dev[i]);   // NK minus flex (structural gap)
+  const gap_stat = y_lev.map((v,i)=>v-stat_tr[i]);   // NK minus statistical trend
+  const gap_bgp  = y_dev;                             // NK minus BGP (deviation from SS)
 
-  const pi_dev_ann   = pi_dev.map(v=>v*4);
-  const r_dev_ann    = r_dev.map(v=>v*4);
-  const rrf_dev_ann  = rrf_dev.map(v=>v*4);
+  // Inflation: deviation from target (annualised pp)
+  const pi_dev_ann = pi_dev.map(v=>v*4);
+
+  // Interest rates: deviation from SS (annualised pp)
+  const r_dev_ann   = r_dev.map(v=>v*4);
+  const rrf_dev_ann = rrf_dev.map(v=>v*4);
 
   setChart(charts.y,   Q, [trend, y_lev, yf_lev, stat_tr]);
   setChart(charts.gap, Q, [gap_flex, gap_stat, gap_bgp]);
@@ -567,15 +532,14 @@ function update() {
 }
 
 function setChart(ch, labels, series) {
-  ch.data.labels = labels;
-  series.forEach((s,i)=>{ if(i<ch.data.datasets.length) ch.data.datasets[i].data = s; });
+  ch.data.labels=labels;
+  series.forEach((s,i)=>{ if(i<ch.data.datasets.length) ch.data.datasets[i].data=s; });
   ch.update('none');
 }
 
 // Initialise
 buildGrid();
-setFilter(D.default_filter);
-updateFilterParamsUI();
+setFilter(D.default_filter);  // activates tab + calls update()
 </script>
 </body>
 </html>
